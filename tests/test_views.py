@@ -1,4 +1,5 @@
 import base64
+from copy import deepcopy
 import datetime
 import json
 import re
@@ -79,30 +80,43 @@ class PasswordTokenViewTest(TestCase):
         self.test_user.delete()
         self.dev_user.delete()
 
-    @override_settings(JWT_ISSUER='api')
-    @override_settings(JWT_PRIVATE_KEY_API='somevalue')
     def test_is_jwt_config_set(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_DEFAULT_ISSUER'] = 'api'
+        settings_copy['JWT_ISSUERS']['api'] = {
+            'private_key': 'somevalue',
+        }
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            self.assertTrue(TokenView._is_jwt_config_set())
+
+    def test_is_jwt_config_set__empty_issuer(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_DEFAULT_ISSUER'] = ''
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            self.assertFalse(TokenView._is_jwt_config_set())
+
+    def test_is_jwt_config_set__missing_issuer(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        del settings_copy['JWT_DEFAULT_ISSUER']
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            self.assertFalse(TokenView._is_jwt_config_set())
+
+    def test_is_jwt_config_set__missing_private_key(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_DEFAULT_ISSUER'] = 'api'
+        settings_copy['JWT_ISSUERS']['api'] = {
+            'private_key': '',
+        }
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            self.assertFalse(TokenView._is_jwt_config_set())
+
+    def test_is_jwt_config_set__ignore_missing_id_attribute(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_DEFAULT_ISSUER'] = 'api'
+        settings_copy['JWT_ISSUERS']['api'] = {
+            'private_key': 'somevalue',
+        }
         self.assertTrue(TokenView._is_jwt_config_set())
-
-    @override_settings(JWT_ISSUER='')
-    @override_settings(JWT_PRIVATE_KEY_API='somevalue')
-    def test_is_jwt_config_not_set_missing_issuer(self):
-        self.assertFalse(TokenView._is_jwt_config_set())
-
-    @override_settings()
-    @override_settings(JWT_PRIVATE_KEY_API='somevalue')
-    def test_is_jwt_config_not_set_none_issuer(self):
-        del settings.JWT_ISSUER
-        self.assertFalse(TokenView._is_jwt_config_set())
-
-    @override_settings(JWT_ISSUER='api')
-    @override_settings(JWT_PRIVATE_KEY_API='')
-    def test_is_jwt_config_not_set_missing_private_key(self):
-        self.assertFalse(TokenView._is_jwt_config_set())
-
-    @override_settings(JWT_ID_ATTRIBUTE='')
-    def test_is_jwt_config_not_set_missing_id_attribute(self):
-        self.assertFalse(TokenView._is_jwt_config_set())
 
     def test_get_token(self):
         """
@@ -113,8 +127,8 @@ class PasswordTokenViewTest(TestCase):
             "username": "test_user",
             "password": "123456",
         }
-        auth_headers = get_basic_auth_header(self.application.client_id,
-                                             self.application.client_secret)
+        auth_headers = get_basic_auth_header(
+            self.application.client_id, self.application.client_secret)
 
         response = self.client.post(
             reverse("oauth2_provider_jwt:token"), data=token_request_data,
@@ -128,8 +142,8 @@ class PasswordTokenViewTest(TestCase):
         self.assertEqual(content["token_type"], "Bearer")
         self.assertIn(type(jwt_token).__name__, ('unicode', 'str'))
         self.assertEqual(content["scope"], "read write")
-        self.assertEqual(content["expires_in"],
-                         oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(
+            content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
         # Validate no unexpected data was included
         self.assertEqual(len(jwt), 5)
@@ -139,7 +153,9 @@ class PasswordTokenViewTest(TestCase):
         self.assertTrue('iat' in jwt)
         self.assertTrue('scope' in jwt)
         self.assertTrue('username' in jwt)
-        self.assertEqual(jwt.get('iss'), settings.JWT_ISSUER)
+        self.assertEqual(
+            jwt.get('iss'),
+            settings.OAUTH2_PROVIDER['JWT_DEFAULT_ISSUER'])
         self.assertEqual(jwt.get('username'), self.test_user.username)
         self.assertEqual(jwt.get('scope'), 'read write')
 
@@ -224,11 +240,16 @@ class PasswordTokenViewTest(TestCase):
         self.assertEqual('test_user', payload_content['username'])
         self.assertEqual('read write', payload_content['scope'])
 
-    @override_settings(JWT_ID_ATTRIBUTE='id')
-    def test_get_token_changed_id_attribute(self):
+    def test_get_token_changed_id_attribute_map(self):
         """
         Request an access token using Implicit Flow
         """
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS']['issuer']['id_attribute_map'] = {
+            'attribute': 'pk',
+            'claim': 'id'
+        }
+
         Application.objects.create(
             client_id='user_app_id',
             client_secret='user_app_secret',
@@ -240,9 +261,11 @@ class PasswordTokenViewTest(TestCase):
         )
         self.client.force_login(self.test_user)
 
-        response = self.client.get(
-            reverse("oauth2_provider_jwt:authorize") +
-            '?response_type=token&client_id=user_app_id')
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            response = self.client.get(
+                reverse("oauth2_provider_jwt:authorize") +
+                '?response_type=token&client_id=user_app_id')
+
         self.assertEqual(302, response.status_code)
         url = urlparse(response.url)
         params = parse_qs(url.fragment)
@@ -254,6 +277,7 @@ class PasswordTokenViewTest(TestCase):
         self.assertTrue(access_token_jwt)
 
         payload_content = self.decode_jwt(access_token_jwt)
+        print(payload_content)
         self.assertEqual(str(self.test_user.id), payload_content['id'])
         self.assertEqual('read write', payload_content['scope'])
 
@@ -284,22 +308,26 @@ class PasswordTokenViewTest(TestCase):
         self.assertEqual(content["expires_in"],
                          oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
-    @override_settings(
-        JWT_PAYLOAD_ENRICHER='tests.test_views.payload_enricher')
-    @override_settings(
-        JWT_PAYLOAD_ENRICHER_OVERWRITE=False)
     def test_get_enriched_jwt(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS']['issuer']['payload_enricher_func'] = \
+            'tests.test_views.payload_enricher'
+        settings_copy['JWT_ISSUERS']['issuer'][
+            'overwrite_token_with_enricher'] = False
+
         token_request_data = {
             "grant_type": "password",
             "username": "test_user",
             "password": "123456",
         }
-        auth_headers = get_basic_auth_header(self.application.client_id,
-                                             self.application.client_secret)
 
-        response = self.client.post(
-            reverse("oauth2_provider_jwt:token"), data=token_request_data,
-            **auth_headers)
+        auth_headers = get_basic_auth_header(
+            self.application.client_id, self.application.client_secret)
+
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            response = self.client.post(
+                reverse("oauth2_provider_jwt:token"), data=token_request_data,
+                **auth_headers)
         content = json.loads(response.content.decode("utf-8"))
         access_token_jwt = content["access_token_jwt"]
         jwt = self.decode_jwt(access_token_jwt)
@@ -312,22 +340,27 @@ class PasswordTokenViewTest(TestCase):
         self.assertTrue('username' in jwt)
         self.assertEqual(jwt.get('username'), self.test_user.username)
 
-    @override_settings(
-        JWT_PAYLOAD_ENRICHER='tests.test_views.payload_enricher')
-    @override_settings(
-        JWT_PAYLOAD_ENRICHER_OVERWRITE=True)
     def test_overwrite_enriched_jwt(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS']['issuer']['payload_enricher_func'] = \
+            'tests.test_views.payload_enricher'
+        settings_copy['JWT_ISSUERS']['issuer'][
+            'overwrite_token_with_enricher'] = True
+
         token_request_data = {
             "grant_type": "password",
             "username": "test_user",
             "password": "123456",
         }
-        auth_headers = get_basic_auth_header(self.application.client_id,
-                                             self.application.client_secret)
 
-        response = self.client.post(
-            reverse("oauth2_provider_jwt:token"), data=token_request_data,
-            **auth_headers)
+        auth_headers = get_basic_auth_header(
+            self.application.client_id, self.application.client_secret)
+
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            response = self.client.post(
+                reverse("oauth2_provider_jwt:token"), data=token_request_data,
+                **auth_headers)
+
         content = json.loads(response.content.decode("utf-8"))
         access_token_jwt = content["access_token_jwt"]
         jwt = self.decode_jwt(access_token_jwt)

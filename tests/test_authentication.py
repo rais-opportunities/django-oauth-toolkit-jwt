@@ -1,8 +1,10 @@
+from copy import deepcopy
 from datetime import datetime, timedelta
 import json
 
-from django.test import TestCase
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.test import TestCase
 from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
@@ -45,8 +47,10 @@ class JWTAuthenticationTests(TestCase):
             response.content,
             b'{"detail":"Incorrect authentication credentials."}')
 
-    @override_settings(JWT_AUTH_DISABLED=True)
     def test_post_valid_jwt_header(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy.update({'JWT_AUTH_DISABLED': True})
+
         now = datetime.utcnow()
         payload = {
             'iss': 'issuer',
@@ -58,10 +62,12 @@ class JWTAuthenticationTests(TestCase):
         }
         jwt_value = utils.encode_jwt(payload)
 
-        response = self.client.post(
-            '/jwt/', {'example': 'example'},
-            HTTP_AUTHORIZATION='JWT {}'.format(jwt_value),
-            content_type='application/json')
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            response = self.client.post(
+                '/jwt/', {'example': 'example'},
+                HTTP_AUTHORIZATION='JWT {}'.format(jwt_value),
+                content_type='application/json')
+
         self.assertEqual(response.status_code, 200)
         sessionkeys_expected = {}
         try:
@@ -83,7 +89,10 @@ class JWTAuthenticationTests(TestCase):
         }
         jwt_value = utils.encode_jwt(payload)
 
-        with override_settings(JWT_AUTH_DISABLED=False):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy.update({'JWT_AUTH_DISABLED': False})
+
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
             response = self.client.post(
                 '/jwt_auth/', {'example': 'example'},
                 HTTP_AUTHORIZATION='JWT {}'.format(jwt_value),
@@ -92,7 +101,8 @@ class JWTAuthenticationTests(TestCase):
             self.assertEqual(
                 json.loads(response.content), {'username': 'temporary'})
 
-        with override_settings(JWT_AUTH_DISABLED=True):
+        settings_copy.update({'JWT_AUTH_DISABLED': True})
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
             response = self.client.post(
                 '/jwt_auth/', {'example': 'example'},
                 HTTP_AUTHORIZATION='JWT {}'.format(jwt_value),
@@ -132,9 +142,12 @@ class JWTAuthenticationTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
 
-class ECDSAJWTAuth(JWTAuthenticationTests):
-    @override_settings(JWT_ENC_ALGORITHM="ES256")
-    @override_settings(JWT_PRIVATE_KEY_ISSUER="""-----BEGIN OPENSSH PRIVATE KEY-----
+ecdsa_settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+ecdsa_settings_copy.update({
+    'JWT_ISSUERS': {
+        'issuer': {
+            'private_key': """
+-----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS
 1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQTRAzrSN7dFmGa05mrQaKfP2xplEFo/
 1InJc3P+pcy1zgN427Y96mmPMMkx1zBk9S0uDFX5WlEJ9UuRxmf+yceVAAAAsJLFlSOSxZ
@@ -142,8 +155,20 @@ UjAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNEDOtI3t0WYZrTm
 atBop8/bGmUQWj/Uiclzc/6lzLXOA3jbtj3qaY8wyTHXMGT1LS4MVflaUQn1S5HGZ/7Jx5
 UAAAAhAJlPEfG7s+7zces2RHc1txeyyjwZxCqUqs25kvtO36nrAAAAFnRob21hc0B3b3Jr
 c3RhdGlvbi1kZWIB
------END OPENSSH PRIVATE KEY-----""")
-    @override_settings(JWT_PUBLIC_KEY_ISSUER="ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNEDOtI3t0WYZrTmatBop8/bGmUQWj/Uiclzc/6lzLXOA3jbtj3qaY8wyTHXMGT1LS4MVflaUQn1S5HGZ/7Jx5U= thomas@workstation-deb")  # noqa: E501
+-----END OPENSSH PRIVATE KEY-----""",
+            'public_key': (
+                'ecdsa-sha2-nistp256 '
+                'AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNEDOtI3t'
+                '0WYZrTmatBop8/bGmUQWj/Uiclzc/6lzLXOA3jbtj3qaY8wyTHXMGT1LS4MVf'
+                'laUQn1S5HGZ/7Jx5U= thomas@workstation-deb'),
+            'encoding_algorithm': 'ES256',
+        }
+    }
+})
+
+
+class ECDSAJWTAuth(JWTAuthenticationTests):
+    @override_settings(OAUTH2_PROVIDER=ecdsa_settings_copy)
     def setUp(self):
         self.client = APIClient(enforce_csrf_checks=True)
         User = get_user_model()
