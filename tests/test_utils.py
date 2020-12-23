@@ -1,13 +1,19 @@
 import base64
+from copy import deepcopy
 from datetime import datetime, timedelta
 import json
 from unittest.mock import patch
 from unittest import TestCase as PythonTestCase
 
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 import jwt
 from oauth2_provider_jwt import utils
+
+issuer_special_chars = 'https://api.service.cloud'
+privkey = settings.OAUTH2_PROVIDER['JWT_ISSUERS']['issuer']['private_key']
+pubkey = settings.OAUTH2_PROVIDER['JWT_ISSUERS']['issuer']['public_key']
 
 
 class GeneratePayloadTest(PythonTestCase):
@@ -71,15 +77,40 @@ class EncodeJWTTest(PythonTestCase):
             'org': 'some_org',
         }
 
-    @override_settings(JWT_PRIVATE_KEY_ISSUER='')
     def test_encode_jwt_no_private_key_in_setting(self):
-        payload = self._get_payload()
-        self.assertRaises(ImproperlyConfigured,
-                          utils.encode_jwt, payload)
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        del settings_copy['JWT_ISSUERS']['issuer']['private_key']
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            payload = self._get_payload()
+            self.assertRaises(ImproperlyConfigured,
+                              utils.encode_jwt, payload)
 
     def test_encode_jwt_rs256(self):
         payload_in = self._get_payload()
         encoded = utils.encode_jwt(payload_in)
+        self.assertIn(type(encoded).__name__, ('unicode', 'str'))
+        headers, payload, verify_signature = encoded.split(".")
+        self.assertDictEqual(
+            json.loads(base64.b64decode(headers)),
+            {"typ": "JWT", "alg": "RS256"})
+        payload += '=' * (-len(payload) % 4)  # add padding
+        self.assertEqual(
+            json.loads(base64.b64decode(payload).decode("utf-8")),
+            payload_in)
+
+    def test_encode_jwt__issuer_special_chars(self):
+        # validate URI style issuers are supported
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS'] = {
+            issuer_special_chars: {'private_key': privkey}
+        }
+
+        payload_in = self._get_payload()
+        payload_in['iss'] = issuer_special_chars
+
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            encoded = utils.encode_jwt(payload_in)
+
         self.assertIn(type(encoded).__name__, ('unicode', 'str'))
         headers, payload, verify_signature = encoded.split(".")
         self.assertDictEqual(
@@ -104,11 +135,20 @@ class EncodeJWTTest(PythonTestCase):
             json.loads(base64.b64decode(payload).decode("utf-8")),
             payload_in)
 
-    @override_settings(JWT_PRIVATE_KEY_ISSUER='test')
-    @override_settings(JWT_ENC_ALGORITHM='HS256')
     def test_encode_jwt_hs256(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS'] = {
+            'issuer': {
+                'private_key': 'test',
+                'encoding_algorithm': 'HS256',
+            }
+        }
+
         payload_in = self._get_payload()
-        encoded = utils.encode_jwt(payload_in)
+
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            encoded = utils.encode_jwt(payload_in)
+
         self.assertIn(type(encoded).__name__, ('unicode', 'str'))
         headers, payload, verify_signature = encoded.split('.')
         self.assertDictEqual(
@@ -135,12 +175,19 @@ class DecodeJWTTest(PythonTestCase):
     def test_decode_jwt_invalid(self):
         self.assertRaises(jwt.InvalidTokenError, utils.decode_jwt, 'abc')
 
-    @override_settings(JWT_PUBLIC_KEY_ISSUER='')
     def test_decode_jwt_public_key_not_found(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS'] = {
+            'issuer': {
+                'private_key': privkey,
+            }
+        }
+
         payload = self._get_payload()
-        jwt_value = utils.encode_jwt(payload)
-        self.assertRaises(ImproperlyConfigured, utils.decode_jwt,
-                          jwt_value)
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            jwt_value = utils.encode_jwt(payload)
+            self.assertRaises(ImproperlyConfigured, utils.decode_jwt,
+                              jwt_value)
 
     def test_decode_jwt_expired(self):
         payload = self._get_payload()
@@ -157,6 +204,23 @@ class DecodeJWTTest(PythonTestCase):
         payload_out = utils.decode_jwt(jwt_value)
         self.assertDictEqual(payload, payload_out)
 
+    def test_decode_jwt__issuer_special_chars(self):
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS'] = {
+            issuer_special_chars: {
+                'private_key': privkey,
+                'public_key': pubkey,
+            }
+        }
+
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            payload = self._get_payload()
+            payload['iss'] = issuer_special_chars
+            jwt_value = utils.encode_jwt(payload)
+            payload_out = utils.decode_jwt(jwt_value)
+
+        self.assertDictEqual(payload, payload_out)
+
     def test_decode_jwt_explicit_issuer(self):
         payload = self._get_payload()
         payload['iss'] = 'different-issuer'
@@ -164,11 +228,17 @@ class DecodeJWTTest(PythonTestCase):
         payload_out = utils.decode_jwt(jwt_value, 'issuer')
         self.assertDictEqual(payload, payload_out)
 
-    @override_settings(JWT_PRIVATE_KEY_ISSUER='test')
-    @override_settings(JWT_PUBLIC_KEY_ISSUER='test')
-    @override_settings(JWT_ENC_ALGORITHM='HS256')
     def test_decode_jwt_hs256(self):
-        payload = self._get_payload()
-        jwt_value = utils.encode_jwt(payload)
-        payload_out = utils.decode_jwt(jwt_value)
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_ISSUERS'] = {
+            'issuer': {
+                'private_key': 'test',
+                'public_key': 'test',
+                'encoding_algorithm': 'HS256',
+            }
+        }
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            payload = self._get_payload()
+            jwt_value = utils.encode_jwt(payload)
+            payload_out = utils.decode_jwt(jwt_value)
         self.assertDictEqual(payload, payload_out)

@@ -1,3 +1,4 @@
+from textwrap import dedent
 ADMINS = ()
 
 MANAGERS = ADMINS
@@ -123,30 +124,40 @@ LOGGING = {
 }
 
 # Library minimal configuration
-
-JWT_ISSUER = 'issuer'
-JWT_ID_ATTRIBUTE = 'username'
-
-# JWT_ENC_ALGORITHM = 'HS256' # 'RS256' is still default
-
-JWT_PRIVATE_KEY_ISSUER = """
------BEGIN RSA PRIVATE KEY-----
-MIIBOAIBAAJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0EhTZAZmJhid2o/+ya/28m
-uuoQgknEoJz32bKeWuYZrFkRKUrGFnlxHwIDAQABAkBILcO2DAxxyx1jIcjNbA8n
-y4XFSfT59fUMSFXVfRWGAAyk4N2bSByMDmdeO+6iNMzuj0RChh++ArnN2OkRFiFR
-AiEAtQLajsU47rWR1/5eCvYEF022ABAeRM1AXGJYzwU6j60CIQCY+Mne04S3WMOd
-HGwNyAhAj5FpSI3SM5KOHebQhwktewIgEoNzNS0I0KlzfEMA/WACNRv2pHUBk4nm
-rkxExw/C2JUCIHy5/f9Nf9zu5zBnSENEYlYhuXKa0egeXNS71MMaF4WZAiAPk2kb
-6D0+csaGDlZ9GbrTpTJUObNENNHqfrHGfqzDxQ==
------END RSA PRIVATE KEY-----
-"""
-
-JWT_PUBLIC_KEY_ISSUER = """
------BEGIN PUBLIC KEY-----
-MFswDQYJKoZIhvcNAQEBBQADSgAwRwJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0E
-hTZAZmJhid2o/+ya/28muuoQgknEoJz32bKeWuYZrFkRKUrGFnlxHwIDAQAB
------END PUBLIC KEY-----
-"""
+OAUTH2_PROVIDER = {
+    'JWT_DEFAULT_ISSUER': 'issuer',
+    'JWT_AUTH_HEADER_PREFIX': 'JWT',
+    'JWT_AUTH_COOKIE_NAME': None,
+    'JWT_AUTH_DISABLED': False,
+    'JWT_ISSUERS': {
+        'issuer': {
+            # Example of a String style issuer.
+            'private_key': dedent("""
+              -----BEGIN RSA PRIVATE KEY-----
+              MIIBOAIBAAJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0EhTZAZmJhid2o/+ya/28m
+              uuoQgknEoJz32bKeWuYZrFkRKUrGFnlxHwIDAQABAkBILcO2DAxxyx1jIcjNbA8n
+              y4XFSfT59fUMSFXVfRWGAAyk4N2bSByMDmdeO+6iNMzuj0RChh++ArnN2OkRFiFR
+              AiEAtQLajsU47rWR1/5eCvYEF022ABAeRM1AXGJYzwU6j60CIQCY+Mne04S3WMOd
+              HGwNyAhAj5FpSI3SM5KOHebQhwktewIgEoNzNS0I0KlzfEMA/WACNRv2pHUBk4nm
+              rkxExw/C2JUCIHy5/f9Nf9zu5zBnSENEYlYhuXKa0egeXNS71MMaF4WZAiAPk2kb
+              6D0+csaGDlZ9GbrTpTJUObNENNHqfrHGfqzDxQ==
+              -----END RSA PRIVATE KEY-----"""),
+            'public_key': dedent("""
+              -----BEGIN PUBLIC KEY-----
+              MFswDQYJKoZIhvcNAQEBBQADSgAwRwJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0E
+              hTZAZmJhid2o/+ya/28muuoQgknEoJz32bKeWuYZrFkRKUrGFnlxHwIDAQAB
+              -----END PUBLIC KEY-----"""),
+            'encoding_algorithm': 'RS256',
+            'validation_algorithms': ['RS256', ],
+            'id_attribute_map': {'claim': 'username', 'attribute': 'username'},
+            'payload_enricher_func': None,
+            'overwrite_token_with_enricher': False,
+        },
+        'https://example.com/': {
+            # Example of a URI style issuer.
+        }
+    },
+}
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

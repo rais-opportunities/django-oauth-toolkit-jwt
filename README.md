@@ -80,7 +80,9 @@ Include the new oauth URLs:
 
 urlpatterns = [
     ...
+    # JWT URLs MUST come before the normal provider URLS
     url(r'^oauth/', include('oauth2_provider_jwt.urls', namespace='oauth2_provider_jwt')),
+    url(r'^oauth/', include('oauth2_provider.urls', namespace='oauth2_provider')),
 ]
 ```
 
@@ -105,40 +107,67 @@ AUTHENTICATION_BACKENDS = (
     'oauth2_provider.backends.OAuth2Backend',
 )
 ```
+Since this is a plugin for django-oauth-toolkit, all settings are namespaced
+under the ``OAUTH2_PROVIDER`` namespace.
 
-Now we need to set up a `JWT_ISSUER` variable in our config, which will be the
-name of the issuer. Take the private key that we generated before
-and store it in a `JWT_PRIVATE_KEY_<JWT_ISSUER>` variable. Finally, define the
-ID attribute you wish to use in `JWT_ID_ATTRIBUTE`. While this can be any
-attribute on your user model it should be unique.
+Now we need to set up the default issuer. This is the entity that will sign
+tokens when you haven't explicitly requested an issuer. The
+`JWT_DEFAULT_ISSUER` variable in our config will be the name of the
+issuer.
 
-Also you have to set your JWT-encoding Algorithm if it's different than
-`RS256`.
+Take the keys generated before and store it in the
+`JWT_ISSUERS[<JWT_ISSUER>]['private_key']` and
+`JWT_ISSUERS[<JWT_ISSUER>]['public_key']` variables. Finally, map a unique
+identifier field from the `User` to a JWT claim in
+`JWT_ISSUERS[<JWT_ISSUER>]['attribute_id_map']` as a dictionary with the keys
+`attribute` and `claim`.
+
+You may also define the algorithm to use when signing the JWT in
+`JWT_ISSUERS[<JWT_ISSUER>]['encoding_algorithm']`
 
 For example:
 
 ```python
 # settings.py
-
-JWT_ISSUER = 'OneIssuer'
-JWT_ID_ATTRIBUTE = 'email'
-JWT_PRIVATE_KEY_ONEISSUER = """
+_JWT_PRIVATE_KEY = """
 -----BEGIN RSA PRIVATE KEY-----
 MIIBOAIBAAJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0EhTZAZmJhid2o/+ya/28m
 ...
 6D0+csaGDlZ9GbrTpTJUObNENNHqfrHGfqzDxQ==
 -----END RSA PRIVATE KEY-----
 """
+_JWT_PUBLIC_KEY = """
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmeym/g734dlLr3bEeVSR
+...
+6wIDAQAB
+-----END PUBLIC KEY-----
+"""
+OAUTH2_PROVIDER = {
+    ...
+    'JWT_DEFAULT_ISSUER': OneIssuer',
+    'JWT_ISSUERS':{
+        'OneIssuer': {
+            'private_key': jwt_private_key,
+            'public_key': jwt_public_key,
+            'encoding_algorithm': 'RS256',
+            'id_attribute_map': {
+                # Places the value of `User.email` in `jwt_payload['sub']`
+                'attribute': 'email',
+                'claim': 'sub',
+            }
+        }
+    }
+}
+
 ```
-
-\* *Note that storing hardcoded secrets in the settings is a bad practice and
+NOTE: storing hardcoded secrets in the settings is a bad practice and
 can lead to severe security breaches in your code. We recommend using
-environment variables for this purpose.*
+environment variables for this purpose.
 
-\** *Note that you can configure only **one** JWT-Encoding Algorithm in
-`JWT_ENC_ALGORITHM`. But you can set multiple allowed decoding(verifying)
-Algorithms in `JWT_JWS_ALGORITHMS` as an array of Strings. It is only useful
-if the JWT is from a 3rd Party and you don't know which Algorithm is used.*
+NOTE: you can configure only **one** JWT-Encoding Algorithm in but you can set
+multiple allowed decoding(/verification) algorithms in the
+`['JWT_ISSUERS'][<JWT_ISSUER>]['validation_algorithms']` tuple.
 
 The payload of messages will be by default something like:
 
@@ -147,25 +176,27 @@ The payload of messages will be by default something like:
     "iss": "OneIssuer",
     "exp": 1234567890,
     "iat": 1234567789,
-    "email": "user@domain.com",
+    "sub": "user@domain.com",
     "scope": "read write"
 }
 ```
+### Payload Enrichment ###
 
-But there is the possibility to add extra data to it. Just create a
-function that will enrich the payload and set the location to it in the
-`JWT_PAYLOAD_ENRICHER` variable:
+There is the possibility to add extra data to your JWT. Just create a
+function that will enrich the payload and define the full module path to the
+callable as a string in the
+`OAUTH2_PROVIDER['JWT_ISSUERS'][<JWT_ISSUER>]['payload_enricher_func']` variable.
 
 ```python
 # settings.py
 
 # Define the function to be called when creating a new JWT
-JWT_PAYLOAD_ENRICHER = 'myapp.jwt_utils.payload_enricher'
+OAUTH2_PROVIDER['JWT_ISSUERS']['OneIssuer']['payload_enricher_func'] = 'myapp.jwt_utils.payload_enricher'
 
 # Ovewrite all of the toolkit's default JWT claims with those provided by the function
 # Useful if you want to design your own token payload (Default: False which
 # performs a `dict().update(payload_enricher(...))`)
-JWT_PAYLOAD_ENRICHER_OVERWRITE = False
+OAUTH2_PROVIDER['JWT_ISSUERS']['OneIssuer']['overwrite_token_with_enricher'] = False
 ```
 
 ```python
@@ -192,7 +223,6 @@ def payload_enricher(**kwargs):
 
     # Values returned here must be serializable by json.dumps
     return {
-        'sub': token.user.pk,
         'preferred_username': token.user.username,
         ...
     }
@@ -216,25 +246,35 @@ REST_FRAMEWORK = {
 ```
 
 Also, you will need to add to the settings every public key of all the
-possible token issuers, if configured, using a variable `JWT_PUBLIC_KEY_<JWT_ISSUER>`:
+possible token issuers, if configured, using a variable
+`OAUTH2_PROVIDER['JWT_ISSUERS'][<JWT_ISSUER>]['public_key']`:
 
 ```python
 # settings.py
-JWT_PUBLIC_KEY_ONEISSUER = """
+_3RD_PARTY_PUB_KEY = """
 -----BEGIN PUBLIC KEY-----
 MFswDQYJKoZIhvcNAQEBBQADSgAwRwJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0E
 hTZAZmJhid2o/+ya/28muuoQgknEoJz32bKeWuYZrFkRKUrGFnlxHwIDAQAB
 -----END PUBLIC KEY-----
 """
+
+OAUTH2_PROVIDER = {
+    ...
+    'JWT_DEFAULT_ISSUER': OneIssuer',
+    'JWT_ISSUERS':{
+        'OneIssuer': {
+            ...
+        },
+        '3rdParty': {
+            'public_key': _3RD_PARTY_PUB_KEY,
+            'validation_algorithms': ['RS256', ],
+        }
+    }
+}
 ```
 
-By default authentication will be enabled, use `JWT_AUTH_DISABLED` setting
-variable to disable that feature:
-
-```python
-# settings.py
-JWT_AUTH_DISABLED = True
-```
+To disable all JWT authentication on your APIs you can set
+`OAUTH2_PROVIDER['JWT_AUTH_DISABLED'] = True`  The default is False (or enabled).
 
 
 Local development
