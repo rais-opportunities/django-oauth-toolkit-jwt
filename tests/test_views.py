@@ -106,9 +106,32 @@ class PasswordTokenViewTest(TestCase):
         settings_copy['JWT_DEFAULT_ISSUER'] = 'api'
         settings_copy['JWT_ISSUERS']['api'] = {
             'private_key': '',
+            'private_key_func': '',
         }
         with override_settings(OAUTH2_PROVIDER=settings_copy):
             self.assertFalse(TokenView._is_jwt_config_set())
+
+    def test_is_jwt_config_set__private_key_only(self):
+        # Validate true when only the private key is set
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_DEFAULT_ISSUER'] = 'api'
+        settings_copy['JWT_ISSUERS']['api'] = {
+            'private_key': '1234',
+            'private_key_func': None,
+        }
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            self.assertTrue(TokenView._is_jwt_config_set())
+
+    def test_is_jwt_config_set__private_key_func(self):
+        # Validate true when only the private key is set
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_DEFAULT_ISSUER'] = 'api'
+        settings_copy['JWT_ISSUERS']['api'] = {
+            'private_key': '',
+            'private_key_func': 'path.to.func',
+        }
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            self.assertTrue(TokenView._is_jwt_config_set())
 
     def test_is_jwt_config_set__ignore_missing_id_attribute(self):
         settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
