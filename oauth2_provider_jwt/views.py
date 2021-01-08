@@ -103,8 +103,9 @@ class TokenView(views.TokenView):
             return False
 
         private_key = iss_settings.get('private_key', None)
+        private_key_func = iss_settings.get('private_key_func', None)
 
-        if issuer and private_key:
+        if issuer and (private_key_func or private_key):
             return True
         else:
             return False

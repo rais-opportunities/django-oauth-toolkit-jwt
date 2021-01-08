@@ -132,6 +132,8 @@ OAUTH2_PROVIDER = {
     'JWT_ISSUERS': {
         'issuer': {
             # Example of a String style issuer.
+            # 'private_key_func': 'some.path.get_private_key',
+            # 'public_key_func': 'some.path.get_public_key',
             'private_key': dedent("""
               -----BEGIN RSA PRIVATE KEY-----
               MIIBOAIBAAJAbCmbRUsLrsv0/Cq7DVDpUooPS1V2sr0EhTZAZmJhid2o/+ya/28m

@@ -1,13 +1,17 @@
 import base64
 from datetime import datetime, timedelta
 import json
+from logging import getLogger
 from typing import Any, Dict, Mapping, Optional, Union
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.module_loading import import_string
 import jwt
 
 from .types import IssuerSettingsDict
+
+logger = getLogger(__name__)
 
 
 def generate_payload(
@@ -43,7 +47,7 @@ def generate_payload(
 
 
 def encode_jwt(payload: Mapping, issuer: Optional[str] = None,
-               headers: Optional[Mapping] = None) -> str:
+               headers: Optional[Dict[str, Union[str, int]]] = None) -> str:
     """Sign and encode the provided ``payload`` as ``issuer``.
 
     Args:
@@ -73,16 +77,43 @@ def encode_jwt(payload: Mapping, issuer: Optional[str] = None,
     else:
         iss = issuer
 
+    if headers is None:
+        headers = {}
+
     # May raise ImproperlyConfigured
     iss_config: Dict[str, Any] = get_issuer_settings(iss)
 
     algorithm: str = iss_config.get('encoding_algorithm', 'RS256')
 
-    try:
-        private_key: str = iss_config['private_key']
-    except KeyError:
+    private_key_func: Optional[str] = iss_config.get('private_key_func', None)
+    private_key: Optional[str] = iss_config.get('private_key', None)
+    key_id: Optional[str] = None
+
+    if private_key_func and private_key:
+        logger.warning(
+            'Both private_key_func and private_key are defined for issuer: '
+            f'{iss}. Remove the value for private_key. Ignoring for now.')
+        private_key = None
+    elif private_key_func is None and private_key is None:
         raise ImproperlyConfigured(
-            f"Missing private_key for issuer {iss}")
+            f'Missing private_key_func or private_key for issuer {iss}')
+
+    if private_key_func:
+        key_fn = import_string(private_key_func)
+        key_id, private_key = key_fn(iss)
+        if not private_key:
+            # Differentiate function failure from a misconfigured private_key
+            # setting
+            raise Exception(  # TODO pick an exception
+                f'key function: {private_key_func} returned an empty key for '
+                f'issuer: {iss}')
+
+    if not private_key:
+        raise ImproperlyConfigured(
+            f'private_key must not be blank for issuer {iss}')
+
+    if key_id is not None:
+        headers['kid'] = key_id
 
     encoded = jwt.encode(
         payload, private_key, algorithm=algorithm, headers=headers)
@@ -109,12 +140,16 @@ def decode_jwt(token: str, issuer: Optional[str] = None) -> Dict[str, Any]:
     """
     try:
         # headers, payload, signature
-        _, payload_enc, _ = token.split(".")
+        b64headers, b64payload, _ = token.split(".")
     except ValueError:
         raise jwt.InvalidTokenError()
 
-    payload_enc += '=' * (-len(payload_enc) % 4)  # add padding
-    payload = json.loads(base64.b64decode(payload_enc).decode("utf-8"))
+    # add padding
+    b64payload += '=' * (-len(b64payload) % 4)
+    b64headers += '=' * (-len(b64headers) % 4)
+
+    payload = json.loads(base64.b64decode(b64payload).decode("utf-8"))
+    headers = json.loads(base64.b64decode(b64headers).decode("utf-8"))
 
     if not issuer:
         if 'iss' in payload:
@@ -130,12 +165,34 @@ def decode_jwt(token: str, issuer: Optional[str] = None) -> Dict[str, Any]:
     except ImproperlyConfigured:
         raise jwt.InvalidIssuerError(f'Unknown issuer {issuer}')
 
+    public_key_func: Optional[str] = iss_config.get('public_key_func', None)
+    public_key: Optional[str] = iss_config.get('public_key', None)
     algorithms = iss_config.get('validation_algorithms', ['HS256', 'RS256'])
 
-    try:
-        public_key: str = iss_config['public_key']
-    except KeyError:
-        raise ImproperlyConfigured(f'Missing public key for {issuer}')
+    key_id = headers.get('kid', None)
+
+    if public_key_func and public_key:
+        logger.warning(
+            'Both public_key_func and public_key are defined for issuer: '
+            '{iss}. Remove the value for public_key. Ignoring for now.')
+        public_key = None
+    elif public_key_func is None and public_key is None:
+        raise ImproperlyConfigured(
+            f'Missing public_key_func or public_key for issuer {iss}')
+
+    if public_key_func:
+        key_fn = import_string(public_key_func)
+        public_key = key_fn(iss, key_id)
+        if not public_key:
+            # Differentiate function failure from a misconfigured public_key
+            # setting
+            raise Exception(  # TODO pick an exception
+                f'public_key_func: {public_key_func} returned an empty key '
+                f'for key_id: {key_id} and issuer: {iss}')
+
+    if not public_key:
+        raise ImproperlyConfigured(
+            f'public_key must not be blank for issuer {iss}')
 
     decoded = jwt.decode(token, public_key, algorithms=algorithms)
     return decoded
