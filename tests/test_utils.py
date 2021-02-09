@@ -276,6 +276,7 @@ class DecodeJWTTest(PythonTestCase):
             'sub': 'subject',
             'usr': 'some_usr',
             'org': 'some_org',
+            'aud': 'abc123',  # verify aud is not verified
         }
 
     def test_invalid_token(self):
@@ -317,7 +318,12 @@ class DecodeJWTTest(PythonTestCase):
                 utils.decode_jwt(token)
             keyfn_mock.assert_called()
         jwtdecode_mock.assert_called_with(
-            token, keyfn_retval, algorithms=['RS256', ])
+            token,
+            keyfn_retval,
+            algorithms=['RS256', ],
+            options={
+                'verify_aud': False,
+            })
 
     def test_none_public_key(self):
         # Validate that a public_key of None causes an error.

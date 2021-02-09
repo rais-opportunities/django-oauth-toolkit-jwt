@@ -105,8 +105,8 @@ def encode_jwt(payload: Mapping, issuer: Optional[str] = None,
             # Differentiate function failure from a misconfigured private_key
             # setting
             raise Exception(  # TODO pick an exception
-                f'key function: {private_key_func} returned an empty key for '
-                f'issuer: {iss}')
+                f'private_key_func: {private_key_func} returned an empty key '
+                f'for issuer: {iss}')
 
     if not private_key:
         raise ImproperlyConfigured(
@@ -187,14 +187,20 @@ def decode_jwt(token: str, issuer: Optional[str] = None) -> Dict[str, Any]:
             # Differentiate function failure from a misconfigured public_key
             # setting
             raise Exception(  # TODO pick an exception
-                f'public_key_func: {public_key_func} returned an empty key '
+                f'public_key_func {public_key_func} returned an empty key '
                 f'for key_id: {key_id} and issuer: {iss}')
 
     if not public_key:
         raise ImproperlyConfigured(
             f'public_key must not be blank for issuer {iss}')
 
-    decoded = jwt.decode(token, public_key, algorithms=algorithms)
+    decoded = jwt.decode(
+        token,
+        public_key,
+        algorithms=algorithms,
+        options={
+            'verify_aud': False,
+        })
     return decoded
 
 
