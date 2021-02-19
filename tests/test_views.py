@@ -182,6 +182,37 @@ class PasswordTokenViewTest(TestCase):
         self.assertEqual(jwt.get('username'), self.test_user.username)
         self.assertEqual(jwt.get('scope'), 'read write')
 
+    def test_get_token__with_overwrite(self):
+        # Validate the jwt overwrites the access code when configured
+        token_request_data = {
+            "grant_type": "password",
+            "username": "test_user",
+            "password": "123456",
+        }
+        auth_headers = get_basic_auth_header(
+            self.application.client_id, self.application.client_secret)
+
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_AS_ACCESS_TOKEN'] = True
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            response = self.client.post(
+                reverse("oauth2_provider_jwt:token"), data=token_request_data,
+                **auth_headers)
+
+        self.assertEqual(response.status_code, 200)
+
+        content = json.loads(response.content.decode("utf-8"))
+        assert "access_token_jwt" not in content
+        jwt = self.decode_jwt(content["access_token"])
+
+        self.assertEqual(len(jwt), 5)
+
+        self.assertTrue('iss' in jwt)
+        self.assertTrue('exp' in jwt)
+        self.assertTrue('iat' in jwt)
+        self.assertTrue('scope' in jwt)
+        self.assertTrue('username' in jwt)
+
     def test_get_token_authorization_code(self):
         """
         Request an access token using Authorization Code Flow
@@ -262,6 +293,41 @@ class PasswordTokenViewTest(TestCase):
         payload_content = self.decode_jwt(access_token_jwt)
         self.assertEqual('test_user', payload_content['username'])
         self.assertEqual('read write', payload_content['scope'])
+
+    def test_get_token_implicit__with_overwrite(self):
+        # Validate the jwt overwrites the access code when configured
+        Application.objects.create(
+            client_id='user_app_id',
+            client_secret='user_app_secret',
+            client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_IMPLICIT,
+            name='user app',
+            skip_authorization=True,
+            redirect_uris='http://localhost:8002/callback',
+        )
+        self.client.force_login(self.test_user)
+
+        settings_copy = deepcopy(settings.OAUTH2_PROVIDER)
+        settings_copy['JWT_AS_ACCESS_TOKEN'] = True
+        with override_settings(OAUTH2_PROVIDER=settings_copy):
+            response = self.client.get(
+                reverse("oauth2_provider_jwt:authorize") +
+                '?response_type=token&client_id=user_app_id')
+
+        self.assertEqual(302, response.status_code)
+        url = urlparse(response.url)
+        params = parse_qs(url.fragment)
+
+        assert "access_token_jwt" not in params
+        jwt = self.decode_jwt(params["access_token"][0])
+
+        self.assertEqual(len(jwt), 5)
+
+        self.assertTrue('iss' in jwt)
+        self.assertTrue('exp' in jwt)
+        self.assertTrue('iat' in jwt)
+        self.assertTrue('scope' in jwt)
+        self.assertTrue('username' in jwt)
 
     def test_get_token_changed_id_attribute_map(self):
         """

@@ -7,6 +7,7 @@ from urllib.parse import urlencode, urlparse, parse_qs  # noqa
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
+import jwt
 from oauth2_provider import views
 from oauth2_provider.http import OAuth2ResponseRedirect
 from oauth2_provider.models import get_access_token_model
@@ -24,8 +25,8 @@ class MissingIdAttributeValue(Exception):
 
 class JWTAuthorizationView(views.AuthorizationView):
     def get(self, request, *args, **kwargs):
-        response = super(JWTAuthorizationView, self).get(request, *args,
-                                                         **kwargs)
+        response = super(JWTAuthorizationView, self).get(
+            request, *args, **kwargs)
         if request.GET.get('response_type', None) == 'token' \
                 and response.status_code == 302:
             url = urlparse(response.url)
@@ -37,9 +38,17 @@ class JWTAuthorizationView(views.AuthorizationView):
                     'scope': params['scope'][0]
                 }
                 jwt = TokenView()._get_access_token_jwt(request, content)
+
+                if settings.OAUTH2_PROVIDER.get('JWT_AS_ACCESS_TOKEN', False):
+                    params['access_token'] = jwt
+                else:
+                    params['access_token_jwt'] = jwt
+
+                fragment = urlencode(params, doseq=True)
                 response = OAuth2ResponseRedirect(
-                    '{}&access_token_jwt={}'.format(response.url, jwt),
+                    f'{url.scheme}://{url.netloc}{url.path}#{fragment}',
                     response.allowed_schemes)
+
         return response
 
 
@@ -113,6 +122,11 @@ class TokenView(views.TokenView):
     def post(self, request, *args, **kwargs):
         response = super(TokenView, self).post(request, *args, **kwargs)
         content = ast.literal_eval(response.content.decode("utf-8"))
+
+        jwt_token_key = 'access_token' \
+            if settings.OAUTH2_PROVIDER.get('JWT_AS_ACCESS_TOKEN', False) \
+            else 'access_token_jwt'
+
         if response.status_code == 200 and 'access_token' in content:
             if not TokenView._is_jwt_config_set():
                 logger.warning(
@@ -120,7 +134,7 @@ class TokenView(views.TokenView):
                     'creation')
             else:
                 try:
-                    content['access_token_jwt'] = self._get_access_token_jwt(
+                    content[jwt_token_key] = self._get_access_token_jwt(
                         request, content)
                     try:
                         content = bytes(json.dumps(content), 'utf-8')
