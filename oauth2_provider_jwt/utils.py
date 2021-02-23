@@ -14,6 +14,10 @@ from .types import IssuerSettingsDict
 logger = getLogger(__name__)
 
 
+class JWKNotFoundError(Exception):
+    pass
+
+
 def generate_payload(
         issuer: str,
         expires_in: int,
@@ -104,7 +108,7 @@ def encode_jwt(payload: Mapping, issuer: Optional[str] = None,
         if not private_key:
             # Differentiate function failure from a misconfigured private_key
             # setting
-            raise Exception(  # TODO pick an exception
+            raise JWKNotFoundError(
                 f'private_key_func: {private_key_func} returned an empty key '
                 f'for issuer: {iss}')
 
@@ -186,7 +190,7 @@ def decode_jwt(token: str, issuer: Optional[str] = None) -> Dict[str, Any]:
         if not public_key:
             # Differentiate function failure from a misconfigured public_key
             # setting
-            raise Exception(  # TODO pick an exception
+            raise JWKNotFoundError(
                 f'public_key_func {public_key_func} returned an empty key '
                 f'for key_id: {key_id} and issuer: {iss}')
 

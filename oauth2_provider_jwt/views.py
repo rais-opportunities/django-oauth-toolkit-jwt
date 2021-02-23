@@ -7,7 +7,6 @@ from urllib.parse import urlencode, urlparse, parse_qs  # noqa
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
-import jwt
 from oauth2_provider import views
 from oauth2_provider.http import OAuth2ResponseRedirect
 from oauth2_provider.models import get_access_token_model
@@ -37,12 +36,13 @@ class JWTAuthorizationView(views.AuthorizationView):
                     'expires_in': int(params['expires_in'][0]),
                     'scope': params['scope'][0]
                 }
-                jwt = TokenView()._get_access_token_jwt(request, content)
+
+                tkn = TokenView()._get_access_token_jwt(request, content)
 
                 if settings.OAUTH2_PROVIDER.get('JWT_AS_ACCESS_TOKEN', False):
-                    params['access_token'] = jwt
+                    params['access_token'] = tkn
                 else:
-                    params['access_token_jwt'] = jwt
+                    params['access_token_jwt'] = tkn
 
                 fragment = urlencode(params, doseq=True)
                 response = OAuth2ResponseRedirect(

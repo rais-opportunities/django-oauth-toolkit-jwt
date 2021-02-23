@@ -11,7 +11,7 @@ from rest_framework.authentication import (
     BaseAuthentication, get_authorization_header
 )
 
-from .utils import decode_jwt, get_issuer_settings
+from .utils import decode_jwt, get_issuer_settings, JWKNotFoundError
 
 
 class JwtToken(dict):
@@ -85,6 +85,9 @@ class JWTAuthentication(BaseAuthentication):
             raise exceptions.AuthenticationFailed(msg)
         except jwt.InvalidTokenError:
             raise exceptions.AuthenticationFailed()
+        except JWKNotFoundError:
+            msg = 'Key not found.'
+            raise exceptions.AuthenticationFailed(msg)
 
         self._add_session_details(request, payload)
 
