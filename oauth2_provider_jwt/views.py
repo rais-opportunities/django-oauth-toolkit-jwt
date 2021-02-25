@@ -54,11 +54,12 @@ class TokenView(views.TokenView):
         if 'scope' in content:
             extra_data['scope'] = content['scope']
 
+        token_model = get_access_token_model().objects.get(
+            token=content['access_token']
+        )
+
         id_attribute = getattr(settings, 'JWT_ID_ATTRIBUTE', None)
         if id_attribute:
-            token_model = get_access_token_model().objects.get(
-                token=content['access_token']
-            )
             id_value = getattr(token_model.user, id_attribute, None)
             if not id_value:
                 if is_machine_to_machine_workflow:  # Check if registered app has any user attached
@@ -71,7 +72,9 @@ class TokenView(views.TokenView):
 
         payload = generate_payload(issuer, content['expires_in'], **extra_data)
         token = encode_jwt(payload)
-        return token
+        token_model.token = token
+        token_model.save()
+        return token, token_model
 
     @staticmethod
     def _is_jwt_config_set(is_machine_to_machine_workflow=False):
