@@ -34,7 +34,8 @@ class JWTAuthorizationView(views.AuthorizationView):
                     'expires_in': int(params['expires_in'][0]),
                     'scope': params['scope'][0]
                 }
-                jwt = TokenView()._get_access_token_jwt(request, content)
+                is_machine_to_machine_workflow = self._is_machine_to_machine_workflow(request)
+                jwt, _ = TokenView()._get_access_token_jwt(request, content, is_machine_to_machine_workflow)
                 response = OAuth2ResponseRedirect(
                     '{}&access_token_jwt={}'.format(response.url, jwt),
                     response.allowed_schemes)
@@ -42,7 +43,7 @@ class JWTAuthorizationView(views.AuthorizationView):
 
 
 class TokenView(views.TokenView):
-    def _get_access_token_jwt(self, request, content):
+    def _get_access_token_jwt(self, request, content, is_machine_to_machine_workflow=False):
         extra_data = {}
         issuer = settings.JWT_ISSUER
         payload_enricher = getattr(settings, 'JWT_PAYLOAD_ENRICHER', None)
@@ -55,12 +56,17 @@ class TokenView(views.TokenView):
 
         id_attribute = getattr(settings, 'JWT_ID_ATTRIBUTE', None)
         if id_attribute:
-            token = get_access_token_model().objects.get(
+            token_model = get_access_token_model().objects.get(
                 token=content['access_token']
             )
-            id_value = getattr(token.user, id_attribute, None)
+            id_value = getattr(token_model.user, id_attribute, None)
             if not id_value:
-                raise MissingIdAttribute()
+                if is_machine_to_machine_workflow:  # Check if registered app has any user attached
+                    id_value = getattr(token_model.application.user, id_attribute, None)
+                    if not id_value:
+                        raise MissingIdAttribute()
+                else:
+                    raise MissingIdAttribute()
             extra_data[id_attribute] = str(id_value)
 
         payload = generate_payload(issuer, content['expires_in'], **extra_data)
@@ -68,31 +74,43 @@ class TokenView(views.TokenView):
         return token
 
     @staticmethod
-    def _is_jwt_config_set():
+    def _is_jwt_config_set(is_machine_to_machine_workflow=False):
         issuer = getattr(settings, 'JWT_ISSUER', '')
         private_key_name = 'JWT_PRIVATE_KEY_{}'.format(issuer.upper())
         private_key = getattr(settings, private_key_name, None)
-        id_attribute = getattr(settings, 'JWT_ID_ATTRIBUTE', None)
+        # JWT_ID_ATTRIBUTE not needed for client_credentials Grant Type
+        id_attribute_default = "FAKE" if is_machine_to_machine_workflow else ""
+        id_attribute = getattr(settings, 'JWT_ID_ATTRIBUTE', id_attribute_default)
         if issuer and private_key and id_attribute:
             return True
         else:
             return False
 
+    def _is_machine_to_machine_workflow(self, request):
+        return 'client_credentials' == request.POST.get('grant_type', '') \
+            or 'client_credentials' == request.GET.get('grant_type', '')
+
     def post(self, request, *args, **kwargs):
         response = super(TokenView, self).post(request, *args, **kwargs)
         content = ast.literal_eval(response.content.decode("utf-8"))
         if response.status_code == 200 and 'access_token' in content:
-            if not TokenView._is_jwt_config_set():
+            is_machine_to_machine_workflow = self._is_machine_to_machine_workflow(request)
+            if not TokenView._is_jwt_config_set(is_machine_to_machine_workflow):
                 logger.warning(
                     'Missing JWT configuration, skipping token build')
             else:
                 try:
-                    content['access_token_jwt'] = self._get_access_token_jwt(
-                        request, content)
+                    access_token_jwt, token_model = self._get_access_token_jwt(
+                        request, content, is_machine_to_machine_workflow)
+                    content['access_token'] = access_token_jwt
                     try:
                         content = bytes(json.dumps(content), 'utf-8')
                     except TypeError:
                         content = bytes(json.dumps(content).encode("utf-8"))
+
+                    # Swap token which was previously generated for a JWT token
+                    token_model.token = access_token_jwt
+                    token_model.save()
                     response.content = content
                 except MissingIdAttribute:
                     response.status_code = 400
