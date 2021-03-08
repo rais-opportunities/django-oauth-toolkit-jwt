@@ -44,19 +44,19 @@ class JWTAuthorizationView(views.AuthorizationView):
 
 class TokenView(views.TokenView):
     def _get_access_token_jwt(self, request, content, is_machine_to_machine_workflow=False):
+        token_model = get_access_token_model().objects.get(
+            token=content['access_token']
+        )
+
         extra_data = {}
         issuer = settings.JWT_ISSUER
         payload_enricher = getattr(settings, 'JWT_PAYLOAD_ENRICHER', None)
         if payload_enricher:
             fn = import_string(payload_enricher)
-            extra_data = fn(request)
+            extra_data = fn(request, token_model)
 
         if 'scope' in content:
             extra_data['scope'] = content['scope']
-
-        token_model = get_access_token_model().objects.get(
-            token=content['access_token']
-        )
 
         id_attribute = getattr(settings, 'JWT_ID_ATTRIBUTE', None)
         if id_attribute:
